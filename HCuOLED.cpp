@@ -1,9 +1,14 @@
 /* FILE:    HCuOLED.cpp
-   DATE:    16/04/15
-   VERSION: 0.1
+   DATE:    06/012/16
+   VERSION: 0.2
    AUTHOR:  Andrew Davies
 
 16/04/15 version 0.1: Original version
+06/12/16 version 0.2: Added compatability with ESP8266
+					  Added support for uOLED displays in I2C mode
+					  Added support for WeMos D1 mini OLED shield (see item HCWEMO0007)
+					  Made speed improvement to erase function (thanks to vladyslav-savchenko)
+					  
 
 Library for SSD1307 and SH1106 based OLED displays. In particular this library has been 
 written for the following displays:
@@ -28,7 +33,9 @@ REASON WHATSOEVER.
 
 #include "HCuOLED.h"
 #include "Arduino.h"
+#if !defined (ESP8266)
 #include <avr/pgmspace.h>
+#endif
 #include "fonts.h"
 
 /* Display output buffer */
@@ -40,192 +47,281 @@ byte HCuOLED::_XPos;
 byte HCuOLED::_YPos;
 byte HCuOLED::_DrawMode;
 const byte *HCuOLED::_FontType;
-const unsigned int *HCuOLED::_FontDescriptor;
+const uint16_t *HCuOLED::_FontDescriptor;
 byte HCuOLED::_FontHight;
 
 
-/* Constructor to initialise the GPIO and library */
-HCuOLED::HCuOLED(byte DisplayType, byte SS_DIO, byte DC_DIO, byte RST_DIO)
+
+/* I2C Constructor to initialise the GPIO and library */
+HCuOLED::HCuOLED(byte DisplayType, byte I2C_Add, byte RST_DIO)
 {
-  /* Set the slave select (SS), Data/Command mode (DC) and reset (RST) pins to outputs */
-  _SS = SS_DIO;
-  _DC = DC_DIO;
-  _RST = RST_DIO;
-
-   pinMode(_SS, OUTPUT);   
-   pinMode(_DC, OUTPUT);  
-   pinMode(_RST, OUTPUT); 
-  
-  
-  /* Enable the hardware SPI interface */
-  SPI.begin();
-  SPI.setBitOrder(MSBFIRST);
-
-  /* Set vertical and horizontal orientation of the display */
-  _V_Ori = 0;
-  _H_Ori = 0;
-
-  /* Set dimension and display area of the screen */
-  switch(DisplayType)
-  {
-	case SSD1307:
-	  _StartCol = 0;
-	  _DisplayRAMColSize = 128;
-	  break;
+	_RST = RST_DIO;
+	_I2C_Add = I2C_Add;
 	
-	case SH1106:
-	  _StartCol = 2;
-	  _DisplayRAMColSize = 132;
-	  break;  
+	_Interface = INT_I2C;
+	_DisplayType = DisplayType;
+	
+	pinMode(_RST, OUTPUT); 
+	
+	/* Set vertical and horizontal orientation of the display */
+	_V_Ori = 0;
+	_H_Ori = 0;
+	
+	
+	/* Set dimension and display area of the screen */
+	switch(_DisplayType)
+	{
+		case SSD1306:
+			_Res_Max_X = SSD1306_RES_X;
+			_GRAM_Col_Start = SSD1306_GRAM_COL_START;
+			_GRAM_Col_End = SSD1306_GRAM_COL_END;
+			_GRAM_Page_Start = SSD1306_GRAM_PAGE_START;
+			_GRAM_Page_End = SSD1306_GRAM_PAGE_END;
+			_RAM_Pages = SSD1306_GRAM_PAGE_END - SSD1306_GRAM_PAGE_START + 1;
+			break;
+	
+		case SH1106:
+			_Res_Max_X = SH1106_RES_X;
+			_GRAM_Col_Start = SH1106_GRAM_COL_START;
+			_GRAM_Col_End = SH1106_GRAM_COL_END;
+			_GRAM_Page_Start = SH1106_GRAM_PAGE_START;
+			_GRAM_Page_End =  SH1106_GRAM_PAGE_END;
+			_RAM_Pages = SH1106_GRAM_PAGE_END - SH1106_GRAM_PAGE_START + 1;;
+			break; 
+
+		case WEMOS_D1_MINI_OLED:
+			_Res_Max_X = WEMOS_RES_X;
+			_GRAM_Col_Start = WEMOS_GRAM_COL_START;
+			_GRAM_Col_End = WEMOS_GRAM_COL_END;
+			_GRAM_Page_Start = WEMOS_GRAM_PAGE_START;
+			_GRAM_Page_End = WEMOS_GRAM_PAGE_END;
+			_RAM_Pages = WEMOS_GRAM_PAGE_END - WEMOS_GRAM_PAGE_START + 1;
+			break;		
+	}
+	
+	
+	/* Set text cursor to top corner */  
+	Cursor(0, 0);
+  
+	/* Set default font */
+	SetFont(Terminal_8pt);  
+  
+	/* Set default draw mode */
+	DrawMode(NORMAL);
+}
+
+
+
+/* SPI Constructor to initialise the GPIO and library */
+HCuOLED::HCuOLED(byte DisplayType, byte SS_DIO, byte DC_DIO, byte RST_DIO = 0xFF)
+{
+	/* Set the slave select (SS), Data/Command mode (DC) and reset (RST) pins to outputs */
+	_SS = SS_DIO;
+	_DC = DC_DIO;
+	_RST = RST_DIO;
+  
+	_Interface = INT_SPI;
+	_DisplayType = DisplayType;
+
+	pinMode(_SS, OUTPUT);   
+	pinMode(_DC, OUTPUT);
+
+	if(_RST != 0xFF)
+		pinMode(_RST, OUTPUT); 
+  
+  
+	/* Enable the hardware SPI interface */
+	SPI.begin();
+	SPI.setBitOrder(MSBFIRST);
+
+	/* Set vertical and horizontal orientation of the display */
+	_V_Ori = 0;
+	_H_Ori = 0;
+
+	/* Set dimension and display area of the screen */
+	switch(_DisplayType)
+	{
+		case SSD1306:
+			_Res_Max_X = SSD1306_RES_X;
+			_GRAM_Col_Start = SSD1306_GRAM_COL_START;
+			_GRAM_Col_End = SSD1306_GRAM_COL_END;
+			_GRAM_Page_Start = SSD1306_GRAM_PAGE_START;
+			_GRAM_Page_End = SSD1306_GRAM_PAGE_END;
+			_RAM_Pages = SSD1306_GRAM_PAGE_END - SSD1306_GRAM_PAGE_START + 1;
+		break;
+	
+		case SH1106:
+			_Res_Max_X = SH1106_RES_X;
+			_GRAM_Col_Start = SH1106_GRAM_COL_START;
+			_GRAM_Col_End = SH1106_GRAM_COL_END;
+			_GRAM_Page_Start = SH1106_GRAM_PAGE_START;
+			_GRAM_Page_End = SH1106_GRAM_PAGE_END;
+			_RAM_Pages = SH1106_GRAM_PAGE_END - SH1106_GRAM_PAGE_START + 1;
+		break;  
   }
 	
-  /* Set text cursor to top corner */  
-  Cursor(0, 0);
+	/* Set text cursor to top corner */  
+	Cursor(0, 0);
   
-  /* Set default font */
-  SetFont(Terminal_8pt);  
+	/* Set default font */
+	SetFont(Terminal_8pt);  
   
-  /* Set default draw mode */
-  DrawMode(NORMAL);
-
+	/* Set default draw mode */
+	DrawMode(NORMAL);
 }
 
 
 /* Writes the contents of the display buffer to the display */
 void HCuOLED::Refresh(void)
 {
-  byte ColIndex;
-  byte RowIndex;   
-      
-  for (RowIndex = 0; RowIndex < 8; RowIndex++)
-  {
-    digitalWrite(_DC, LOW);
-    /* Page address */
-    digitalWrite(_SS, LOW);
-    SPI.transfer(PAGEADD | RowIndex);
-    digitalWrite(_SS, HIGH);
-    
-    /* Lower column address */
-    digitalWrite(_SS, LOW);
-    SPI.transfer(COLLOWADD | _StartCol);
-    digitalWrite(_SS, HIGH);
-  
-    /* Higher column address */
-    digitalWrite(_SS, LOW);
-    SPI.transfer(COLHIGHADD | 0x0); 
-    digitalWrite(_SS, HIGH);
-   
-    /* Write to display RAM */  
-	_DisplayMode();
-    for (ColIndex = 0; ColIndex < BUFFERCOLSIZE; ColIndex++)
-    {
-      digitalWrite(_SS, LOW); 
-      SPI.transfer(DisplayBuffer[ColIndex][RowIndex]);
-      digitalWrite(_SS, HIGH); 
-    }
-  }
+	byte ColIndex;
+	byte RowIndex;   
+     
+	/* Only for displays with SSD1306 controller which support horizontal address mode */  
+	if(_DisplayType == SSD1306 || _DisplayType == WEMOS_D1_MINI_OLED)
+	{
+		/* set graphics ram start and end columns */
+		_Send_Command(SETCOLADDRESS);
+		_Send_Command(_GRAM_Col_Start);
+		_Send_Command(_GRAM_Col_End);
+	 
+		/* set graphics ram start and end pages */ 
+		_Send_Command(SETPAGEADDRESS);
+		_Send_Command(_GRAM_Page_Start);
+		_Send_Command(_GRAM_Page_End);
+	}
+    	
+		
+	for (RowIndex = 0; RowIndex < _RAM_Pages; RowIndex++)
+	{
+		/* Only with displays with SH1106 controller that don't support horizontal address mode */
+		if( _DisplayType == SH1106)
+		{
+			_Send_Command(PAGEADD | RowIndex);
+			_Send_Command(COLLOWADD | _GRAM_Col_Start); /* Lower column address */
+			_Send_Command(COLHIGHADD | 0x0); /* Higher column address */
+		}
+		
+		/* Via SPI interface */
+		if(_Interface == INT_SPI)
+		{
+			/* Write to display RAM */  
+			_DisplayMode();
+			for (ColIndex = 0; ColIndex < _Res_Max_X; ColIndex++)
+			{
+				digitalWrite(_SS, LOW); 
+				SPI.transfer(DisplayBuffer[ColIndex][RowIndex]);
+				digitalWrite(_SS, HIGH); 
+			}
+		}else /* Via I2C interface */
+		{	
+			/* Write to display RAM */ 
+			ColIndex = 0;
+			do
+			{
+				Wire.beginTransmission(_I2C_Add);
+				Wire.write(I2C_DATA); /* Data */
+				/* I2C buffer can only hold 32 bytes so write data to graphics memory in 32 byte chunks */
+				for(byte i = 0; i < 31 && ColIndex < _Res_Max_X; i++)
+				{
+					Wire.write(DisplayBuffer[ColIndex][RowIndex]); 
+					ColIndex++;
+				}
+				Wire.endTransmission();
+			}while(ColIndex < _Res_Max_X);
+		}
+	}
 }
 
 
 /* Reset and initialise the module */
 void HCuOLED::Reset(void)
 {
-  /* Wait 100mS for DC-DC to stabilise. This can probably be reduced */
-  delay(100);
-  
-  /* Reset the module */
-  digitalWrite(_RST, LOW);
-  delay(1);
-  digitalWrite(_RST, HIGH);
-  
 
-  /* Enable charge pump on SSD1306 */
-  digitalWrite(_SS, LOW);
-  SPI.transfer(0x8D);
-  SPI.transfer(0x14);
-  digitalWrite(_SS, HIGH);
+	/* Reset the module */
+	if(_RST != 0xFF)
+	{
+		digitalWrite(_RST, LOW);
+		delay(1);
+		digitalWrite(_RST, HIGH);
+	}
   
-  /* Clear the display buffer */
-  ClearBuffer();
+	/* Wait 100mS for DC-DC to stabilise. This can probably be reduced */
+	delay(100);
+ 
+	_Send_Command(SETMUXRATIO); //Set MUX ratio
+	_Send_Command(0x3F);
+	
+	_Send_Command(CHARGEPUMP); //Enable charge pump
+	_Send_Command(ENABLECHARGEPUMP);
+   
+	/* Set memory addressing mode to horizontal addressing */
+	_Send_Command(MEMORYADDRESSMODE);
+	_Send_Command(HORIZONTALADDRESSMODE);
+	
+   
+	/* Clear the display buffer */
+	ClearBuffer();
 
-  /* Output the display buffer to clear the display RAM */
-  //ClearDisplayRam();
-  Refresh();
+	/* Output the display buffer to clear the display RAM */
+	Refresh();
+
+	/* Turn display on */
+	_Send_Command(DISPLAYONADD | 1);
   
-  /* Change to command mode */
-  _CommandMode();
+	/* Wait 150mS for display to turn on */
+	delay(150);
   
-  /* Turn the display on */
-  digitalWrite(_SS, LOW);
-  SPI.transfer(DISPLAYONADD | 1);
-  digitalWrite(_SS, HIGH);
-  
-  /* Wait 150mS for display to turn on */
-  delay(150);
-  
-  /* Flip the display */
-  Flip_H();
-  Flip_V();
+	/* Flip the display */
+	Flip_H();
+	Flip_V();	
 }
+
+
+/* Sends a command byte to the display where:
+   Data is the byte of data to send to the command register */
+void HCuOLED::_Send_Command(byte Data)
+{	
+	if(_Interface == INT_SPI) // Via SPI interface
+	{	
+		digitalWrite(_DC, LOW); /* Write to command registers */
+		digitalWrite(_DC, LOW);
+		digitalWrite(_SS, LOW);
+		SPI.transfer(Data);
+		digitalWrite(_SS, HIGH);
+	}else // Via I2C interface 
+	{
+		Wire.beginTransmission(_I2C_Add);
+		Wire.write(I2C_COMMAND); 
+		Wire.write(Data);
+		Wire.endTransmission();
+	}
+}
+
 
 /* Clears the contents of the output buffer */
 void HCuOLED::ClearBuffer(void)
 {
-  byte ColIndex;
-  byte RowIndex;
+	byte ColIndex;
+	byte RowIndex;
 
-  for (RowIndex = 0; RowIndex < 8; RowIndex++)
-  {    
-    for (ColIndex = 0; ColIndex < BUFFERCOLSIZE; ColIndex++)
-    {
-      DisplayBuffer[ColIndex][RowIndex] = 0x00;
-    }
-  }
+	for (RowIndex = 0; RowIndex < 8; RowIndex++)
+	{    
+		for (ColIndex = 0; ColIndex < BUFFERCOLSIZE; ColIndex++)
+		{
+		DisplayBuffer[ColIndex][RowIndex] = 0x00;
+		}
+	}
 }
 
 
-
-// void HCuOLED::ClearDisplayRam(void)
-// {
-  // byte ColIndex;
-  // byte RowIndex;   
-      
-  // for (RowIndex = 0; RowIndex < 8; RowIndex++)
-  // {
-    // digitalWrite(_DC, LOW);
-    // /* Page address */
-    // digitalWrite(_SS, LOW);
-    // SPI.transfer(PAGEADD | RowIndex);
-    // digitalWrite(_SS, HIGH);
-    
-    // /* Lower column address */
-    // digitalWrite(_SS, LOW);
-    // SPI.transfer(COLLOWADD | _StartCol);
-    // digitalWrite(_SS, HIGH);
-  
-    // /* Higher column address */
-    // digitalWrite(_SS, LOW);
-    // SPI.transfer(COLHIGHADD | 0x0); 
-    // digitalWrite(_SS, HIGH);
-      
-    // digitalWrite(_DC, HIGH);   
-    // for (ColIndex = 0; ColIndex < _DisplayRAMColSize; ColIndex++)
-    // {
-      // digitalWrite(_SS, LOW); 
-      // SPI.transfer(0x00);
-      // digitalWrite(_SS, HIGH); 
-    // }
-  // }
-// }
-
-
-/* Switch to command mode */
+/* Switch to command mode (SPI only) */
 void HCuOLED::_CommandMode(void)
 {
    digitalWrite(_DC, LOW);  
 }
 
-/* Switch to display mode */
+/* Switch to display mode (SPI only) */
 void HCuOLED::_DisplayMode(void)
 {
    digitalWrite(_DC, HIGH);  
@@ -235,33 +331,71 @@ void HCuOLED::_DisplayMode(void)
 /* Flip the horizontal orientation of the screen */
 void HCuOLED::Flip_H(void)
 {
-  _CommandMode();
-  digitalWrite(_SS, LOW);
-  _H_Ori = ~_H_Ori;
-  if(_H_Ori)
-  {
-    SPI.transfer(SCANDIRECTIONADD | SCANDIRREVERSE);
-  }else
-  {
-    SPI.transfer(SCANDIRECTIONADD | SCANDIRNORMAL);
-  }
-  digitalWrite(_SS, HIGH);
+	_H_Ori = ~_H_Ori;
+	
+	/* Via SPI interface */
+	if(_Interface == INT_SPI)
+	{
+		_CommandMode();
+		digitalWrite(_SS, LOW);
+  
+		if(_H_Ori)
+		{
+			SPI.transfer(SCANDIRECTIONADD | SCANDIRREVERSE);
+		}else
+		{
+			SPI.transfer(SCANDIRECTIONADD | SCANDIRNORMAL);
+		}
+		digitalWrite(_SS, HIGH);
+	}else /* Via I2C interface */
+	{
+		Wire.beginTransmission(_I2C_Add);
+		Wire.write(I2C_COMMAND); /* Command */
+		if(_H_Ori)
+		{
+			Wire.write(SCANDIRECTIONADD | SCANDIRREVERSE);
+		}else
+		{
+			Wire.write(SCANDIRECTIONADD | SCANDIRNORMAL);
+		}			
+		Wire.endTransmission();
+	}
 }
+
+
 
 /* Flip the vertical orientation of the screen */
 void HCuOLED::Flip_V(void)
 {
-  _CommandMode();
-  digitalWrite(_SS, LOW);
-  _V_Ori = ~_V_Ori;
-  if(_V_Ori)
-  {
-    SPI.transfer(SEGMENTMAPADD | SEGMENTMAPREVERSE);
-  }else
-  {
-    SPI.transfer(SEGMENTMAPADD | SEGMENTMAPNORMAL);
-  }
-  digitalWrite(_SS, HIGH);
+	_V_Ori = ~_V_Ori;
+	
+	/* Via SPI interface */
+	if(_Interface == INT_SPI)
+	{
+		_CommandMode();
+		digitalWrite(_SS, LOW);
+  
+		if(_V_Ori)
+		{
+			SPI.transfer(SEGMENTMAPADD | SEGMENTMAPREVERSE);
+		}else
+		{
+			SPI.transfer(SEGMENTMAPADD | SEGMENTMAPNORMAL);
+		}
+		digitalWrite(_SS, HIGH);
+	}else /* Via I2C interface */
+	{
+		Wire.beginTransmission(_I2C_Add);
+		Wire.write(I2C_COMMAND); /* Command */
+		if(_V_Ori)
+		{
+			Wire.write(SEGMENTMAPADD | SEGMENTMAPREVERSE); 
+		}else
+		{
+			Wire.write(SEGMENTMAPADD | SEGMENTMAPNORMAL); 
+		}
+		Wire.endTransmission();
+	}
 }
 
 
@@ -271,72 +405,72 @@ void HCuOLED::Flip_V(void)
    ByteRows is the number of rows to write to in 8 pixel chunks 
    BitmapData is an array containing the bitmap data to be written */
 
-void HCuOLED::Bitmap(byte Cols, byte ByteRows, const byte BitmapData[])
+void HCuOLED::Bitmap(uint8_t Cols, uint8_t ByteRows, const uint8_t BitmapData[])
 {
-  byte XIndex;
-  byte YIndex;
+	byte XIndex;
+	byte YIndex;
   
-  byte BufRow;
-  byte BufX;
-  unsigned int BitmapIndex;
+	byte BufRow;
+	byte BufX;
+	unsigned int BitmapIndex;
   
-  /* Step through each 8 pixel row */
-  for (YIndex = 0; YIndex < ByteRows; YIndex++)
-  {
-	/* Step through each column */
-    for (XIndex = 0; XIndex < Cols; XIndex++)
-    {
-      BufX = XIndex + _XPos;
+	/* Step through each 8 pixel row */
+	for (YIndex = 0; YIndex < ByteRows; YIndex++)
+	{
+		/* Step through each column */
+		for (XIndex = 0; XIndex < Cols; XIndex++)
+		{
+			BufX = XIndex + _XPos;
       
-      /* If column is beyond display area then don't bother writing to it*/
-      if(BufX < BUFFERCOLSIZE)
-      {
-        BufRow = YIndex + (_YPos / 8);
-        BitmapIndex = (YIndex * Cols)+ XIndex;
+			/* If column is beyond display area then don't bother writing to it*/
+			if(BufX < BUFFERCOLSIZE)
+			{
+				BufRow = YIndex + (_YPos / 8);
+				BitmapIndex = (YIndex * Cols)+ XIndex;
       
-        /* If row is beyond the display area then don't bother writing to it */
-		if(BufRow < BUFFERROWSIZE)
-          if (_DrawMode == NORMAL)
-		  {
-		    DisplayBuffer[BufX][BufRow] |= pgm_read_byte_near(&BitmapData[BitmapIndex]) << (_YPos%8);
-		  }else
-		  {
-		    DisplayBuffer[BufX][BufRow] ^= pgm_read_byte_near(&BitmapData[BitmapIndex]) << (_YPos%8);
-		  }
+				/* If row is beyond the display area then don't bother writing to it */
+				if(BufRow < BUFFERROWSIZE)
+				if (_DrawMode == NORMAL)
+				{
+					DisplayBuffer[BufX][BufRow] |= pgm_read_byte_near(&BitmapData[BitmapIndex]) << (_YPos%8);
+				}else
+				{
+					DisplayBuffer[BufX][BufRow] ^= pgm_read_byte_near(&BitmapData[BitmapIndex]) << (_YPos%8);
+				}
 
-		/* If column data overlaps to 8 bit rows then write to the second row */  
-        if(_YPos%8 && (BufRow +1) < BUFFERROWSIZE)
-          if (_DrawMode == NORMAL)
-		  {
- 		    DisplayBuffer[BufX][BufRow+1] |= pgm_read_byte_near(&BitmapData[BitmapIndex]) >> (8 - (_YPos%8));
-		  }else
-		  {
- 		    DisplayBuffer[BufX][BufRow+1] ^= pgm_read_byte_near(&BitmapData[BitmapIndex]) >> (8 - (_YPos%8));		  
-		  }
-      }
-    }
-  }
+				/* If column data overlaps to 8 bit rows then write to the second row */  
+				if(_YPos%8 && (BufRow +1) < BUFFERROWSIZE)
+				if (_DrawMode == NORMAL)
+				{
+					DisplayBuffer[BufX][BufRow+1] |= pgm_read_byte_near(&BitmapData[BitmapIndex]) >> (8 - (_YPos%8));
+				}else
+				{
+					DisplayBuffer[BufX][BufRow+1] ^= pgm_read_byte_near(&BitmapData[BitmapIndex]) >> (8 - (_YPos%8));		  
+				}
+			}
+		}
+	}
 }
 
 
 /* Write to a single pixel on the display where:
    X is the x axis coordinate of the pixel
    Y is the Y axis coordinate of the pixel */
-void HCuOLED::Plot(byte X, byte Y)
+void HCuOLED::Plot(uint8_t X, uint8_t Y)
 {
-  byte row = Y / BUFFERROWSIZE;
+	byte row = Y / BUFFERROWSIZE;
 
-  if(X < BUFFERCOLSIZE && row < BUFFERROWSIZE)
-    if (_DrawMode == NORMAL)
-	{
-	  DisplayBuffer[X][row] |=  (0x01 << (Y % 8));
-	}else if(_DrawMode == INVERT)
-	{
-	  DisplayBuffer[X][row] ^=  (0x01 << (Y % 8));	
-	}else if(_DrawMode == CLEAR)
-	{
-	  DisplayBuffer[X][row] &=  ~(0x01 << (Y % 8));	
-	}
+	if(X < BUFFERCOLSIZE && row < BUFFERROWSIZE)
+		if (_DrawMode == NORMAL)
+		{
+			DisplayBuffer[X][row] |=  (0x01 << (Y % 8));
+		}else if(_DrawMode == INVERT)
+		{
+			DisplayBuffer[X][row] ^=  (0x01 << (Y % 8));	
+		}else if(_DrawMode == CLEAR)
+		{
+		DisplayBuffer[X][row] &=  ~(0x01 << (Y % 8));	
+		}
 }
 
 
@@ -345,49 +479,51 @@ void HCuOLED::Plot(byte X, byte Y)
    Y1 is the starting Y axis coordinate of the line
    X2 is the starting X axis coordinate of the line
    Y2 is the starting Y axis coordinate of the line */
-void HCuOLED::Line(byte X1, byte Y1, byte X2, byte Y2)
+void HCuOLED::Line(uint8_t X1, uint8_t Y1, uint8_t X2, uint8_t Y2)
 {
-  double step;
-  int x, y;
+	double step;
+	int x, y;
  
-  /* If start coordinates are below and to the right of the end coordinate then flip them */
-  if((X2 <= X1 && Y2 <= Y1) || (X2 >= X1 && Y1 >= Y2) || (X2 >= X1 && Y1 >= Y2)) 
-  {
-    X2^=X1;
-    X1^=X2;
-    X2^=X1;
-    Y2^=Y1;
-    Y1^=Y2;
-    Y2^=Y1;
-  }
-
-  /* If X axis is wider than Y axis then step though X axis */
-  if(((X2-X1) >= (Y2-Y1)) || ((X1 - X2) >= (Y2-Y1)))
-  {
-   	step = (double)(Y2-Y1) / (X2-X1);
-    if(X2 >= X1 && Y2 >= Y1)
-    {
-	  for(x = X1; x <= X2; x++)
-	    Plot(x, ((x-X1) * step) + Y1); 
-    }else
-    {
-	  for(x = X1; x >= X2; x--)
-	    Plot(x, Y2 + ((x-X2) * step));
-    } 
-  }else /* If Y axis is wider than X axis then step though Y axis */
-  {
-  	step = (double)(X2-X1) / (Y2-Y1);
-    if(Y2 >= Y1 && X2 >= X1)
-    {
-	  for(y = Y1; y <= Y2; y++)
-	    Plot(((y-Y1) * step) + X1, y); 
-    }else
+	/* If start coordinates are below and to the right of the end coordinate then flip them */
+	if((X2 <= X1 && Y2 <= Y1) || (X2 >= X1 && Y1 >= Y2) || (X2 >= X1 && Y1 >= Y2)) 
 	{
-	  for(y = Y2; y >= Y1; y--)
-	    Plot(X2 + ((y-Y2) * step),y);	
+		X2^=X1;
+		X1^=X2;
+		X2^=X1;
+		Y2^=Y1;
+		Y1^=Y2;
+		Y2^=Y1;
+	}
+
+	/* If X axis is wider than Y axis then step though X axis */
+	if(((X2-X1) >= (Y2-Y1)) || ((X1 - X2) >= (Y2-Y1)))
+	{
+		step = (double)(Y2-Y1) / (X2-X1);
+		if(X2 >= X1 && Y2 >= Y1)
+		{
+			for(x = X1; x <= X2; x++)
+				Plot(x, ((x-X1) * step) + Y1); 
+		}else
+		{
+			for(x = X1; x >= X2; x--)
+				Plot(x, Y2 + ((x-X2) * step));
+		} 
+	}else /* If Y axis is wider than X axis then step though Y axis */
+	{
+		step = (double)(X2-X1) / (Y2-Y1);
+		if(Y2 >= Y1 && X2 >= X1)
+		{
+			for(y = Y1; y <= Y2; y++)
+				Plot(((y-Y1) * step) + X1, y); 
+		}else
+		{
+			for(y = Y2; y >= Y1; y--)
+				Plot(X2 + ((y-Y2) * step),y);	
 	}
   }
 }
+
+
 
 /* Draw a rectangle where:
    X1 is the X axis coordinate of the first corner
@@ -398,53 +534,61 @@ void HCuOLED::Line(byte X1, byte Y1, byte X2, byte Y2)
    OUTLINE (Draws an outlined rectangle with no fill
    SOLID (Draws a filled filled rectangle) */
    
-void HCuOLED::Rect(byte X1, byte Y1, byte X2, byte Y2, byte FillMode)
+void HCuOLED::Rect(uint8_t X1, uint8_t Y1, uint8_t X2, uint8_t Y2, uint8_t FillMode)
 {
-  byte y;
+	byte y;
 
-  /* Draw the top and bottom borders */
-  Line(X1, Y1, X2, Y1);
-  Line(X1, Y2, X2, Y2);
+	/* Draw the top and bottom borders */
+	Line(X1, Y1, X2, Y1);
+	Line(X1, Y2, X2, Y2);
   
-  /* If first corner is below second corner then flip the coordinates */
-  if(Y1 > Y2)
-  {
-     Y2^=Y1;
-     Y1^=Y2;
-     Y2^=Y1;  
-  }
+	/* If first corner is below second corner then flip the coordinates */
+	if(Y1 > Y2)
+	{
+		Y2^=Y1;
+		Y1^=Y2;
+		Y2^=Y1;  
+	}
   
-  /* If rectangle is wider than two pixels set Y for drawing vertical borders */
-  if(Y2-Y1 > 1)
-  {
-	Y1++;
-	Y2--;
-  }
+	/* If rectangle is wider than two pixels set Y for drawing vertical borders */
+	if(Y2-Y1 > 1)
+	{
+		Y1++;
+		Y2--;
+	}
  
-  /* If box is solid then fill area between top and bottom border */
-  if(FillMode == SOLID)
-  {
-	for(y = Y1; y <= Y2; y++)
-	  Line(X1, y, X2, y);
-  }else  /* if not solid then just draw vertical borders */
-  {
-    Line(X1, Y1, X1, Y2);
-    Line(X2, Y1, X2, Y2); 
-  }
+	/* If box is solid then fill area between top and bottom border */
+	if(FillMode == SOLID)
+	{
+		for(y = Y1; y <= Y2; y++)
+			Line(X1, y, X2, y);
+	}else  /* if not solid then just draw vertical borders */
+	{
+		Line(X1, Y1, X1, Y2);
+		Line(X2, Y1, X2, Y2); 
+	}
 }
 
 /* Clears an area of the display buffer where:
    X1 is the X axis coordinate of the first corner
    Y1 is the Y axis coordinate of the first corner
    X2 is the X axis coordinate of the opposite corner
-   Y2 is the Y axis coordinate of the opposite corner */
-void HCuOLED::Erase(byte X1, byte Y1, byte X2, byte Y2)
+   Y2 is the Y axis coordinate of the opposite corner 
+   
+   Thanks to vladyslav-savchenko for improved version */
+void HCuOLED::Erase(uint8_t X1, uint8_t Y1, uint8_t X2, uint8_t Y2)
 {
-  byte temp = _DrawMode;
-  _DrawMode = CLEAR;
-  Rect(X1, Y1, X2, Y2, SOLID);
-  _DrawMode = temp;
-}
+	byte temp = _DrawMode;
+	_DrawMode = CLEAR;
+
+	for (int column = X1; column <= X2; column ++) 
+		for (int row = Y1; row <= Y2; row ++) 
+			Plot(column, row);
+		
+	_DrawMode = temp;
+ }
+ 
+ 
 
 /* Sets the drawing mode for text and graphics where:
    DrawMode sets the drawing mode. Options are:
@@ -453,16 +597,16 @@ void HCuOLED::Erase(byte X1, byte Y1, byte X2, byte Y2)
    CLEAR  (Pixels are set to background colour) */
 void HCuOLED::DrawMode(byte DrawMode)
 {
-  _DrawMode = DrawMode;
+	_DrawMode = DrawMode;
 }
 
 /* Sets the location of the cursor for text and bitmap graphics where:
    X and Y are the starting top left X & Y axis coordinates */
 
-void HCuOLED::Cursor(byte X, byte Y)
+void HCuOLED::Cursor(uint8_t X, uint8_t Y)
 {
-  _XPos = X;
-  _YPos = Y;
+	_XPos = X;
+	_YPos = Y;
 }
 
 
@@ -470,16 +614,16 @@ void HCuOLED::Cursor(byte X, byte Y)
    TextString[] is a string array containing the text to be displayed */
 void HCuOLED::Print(char TextString[])
 {
-  byte StringLength;
-  byte Index;
+	byte StringLength;
+	byte Index;
   
-  /* Finds length of string */
-  StringLength = strlen(TextString) - 1;
+	/* Finds length of string */
+	StringLength = strlen(TextString) - 1;
 
-  for (Index = 0; Index <= StringLength; Index++)
-  {
-	_WriteChar(TextString[Index] - 32);
-  }
+	for (Index = 0; Index <= StringLength; Index++)
+	{
+		_WriteChar(TextString[Index] - 32);
+	}
 }
 
 
@@ -490,17 +634,17 @@ void HCuOLED::Print(char TextString[])
    
 void HCuOLED::Print(float value, byte digits, byte DecimalPlaces)
 {
-  char Buffer[10];
+	char Buffer[10];
   
-  /* Clip the number of digits to 10 */
-  if (digits > 10)
-   digits = 10;
+	/* Clip the number of digits to 10 */
+	if (digits > 10)
+		digits = 10;
 
-  /* Convert the value to an character array */ 
-  dtostrf(value, digits, DecimalPlaces, Buffer);
+	/* Convert the value to an character array */ 
+	dtostrf(value, digits, DecimalPlaces, Buffer);
   
-  /* Output the array to the display buffer */
-  Print(Buffer);
+	/* Output the array to the display buffer */
+	Print(Buffer);
 }
 
 
@@ -509,35 +653,35 @@ void HCuOLED::Print(float value, byte digits, byte DecimalPlaces)
    Value is signed integer number of type long */
 void HCuOLED::Print(long Value)
 {
-  byte Digits[10];
-  int long Temp;
-  byte NumDigits = 0;
+	byte Digits[10];
+	int long Temp;
+	byte NumDigits = 0;
   
-  /* Is the number negative ? */
-  if (Value < 0)
-  {
-	_WriteChar(13);
-	Temp = Value * -1;
-  }else
-  {
-    Temp = Value;
-  }
+	/* Is the number negative ? */
+	if (Value < 0)
+	{
+		_WriteChar(13);
+		Temp = Value * -1;
+	}else
+	{
+		Temp = Value;
+	}
   
-  /* Store each digit in a byte array so that they 
-     can be printed in reverse order */
-  while (Temp)
-  {
-    Digits[NumDigits] = Temp % 10;
-	Temp /= 10;
-	NumDigits++;
-  } 
+	/* Store each digit in a byte array so that they 
+	   can be printed in reverse order */
+	while (Temp)
+	{
+		Digits[NumDigits] = Temp % 10;
+		Temp /= 10;
+		NumDigits++;
+	} 
 
-  /* Print each digit */
-  while(NumDigits)
-  {
-	NumDigits--;
-	_WriteChar(Digits[NumDigits] + 16);
-  }
+	/* Print each digit */
+	while(NumDigits)
+	{
+		NumDigits--;
+		_WriteChar(Digits[NumDigits] + 16);
+	}
 }
 
 
@@ -547,45 +691,45 @@ void HCuOLED::Print(long Value)
    DecimalPlaces is the position of the decimal point */
 void HCuOLED::Print(int long Value, byte DecimalPlaces)
 {
-  byte Digits[10];
-  int long Temp;
-  byte NumDigits = 0;
+	byte Digits[10];
+	int long Temp;
+	byte NumDigits = 0;
   
-  /* Is the number negative ? */
-  if (Value < 0)
-  {
-	_WriteChar(13); 
-	Temp = Value * -1;
-  }else
-  {
-    Temp = Value;
-  }
+	/* Is the number negative ? */
+	if (Value < 0)
+	{
+		_WriteChar(13); 
+		Temp = Value * -1;
+	}else
+	{
+		Temp = Value;
+	}
   
-  /* Store each digit in a byte array so that they 
-     can be printed in reverse order */
-  while (Temp)
-  {
-    Digits[NumDigits] = Temp % 10;
-	Temp /= 10;
-	NumDigits++;
-  } 
+	/* Store each digit in a byte array so that they 
+	   can be printed in reverse order */
+	while (Temp)
+	{
+		Digits[NumDigits] = Temp % 10;
+		Temp /= 10;
+		NumDigits++;
+	} 
 
-  /* If the decimal point is at the beginning of the 
-     number then pad it with a zero */ 
-  if(DecimalPlaces == NumDigits)
-  {
-    _WriteChar(16);
-  }
+	/* If the decimal point is at the beginning of the 
+	   number then pad it with a zero */ 
+	if(DecimalPlaces == NumDigits)
+	{
+		_WriteChar(16);
+	}
   
-  /* Print each digit */
-  while(NumDigits)
-  {
-	NumDigits--;
-	if (NumDigits + 1 == DecimalPlaces)
-	  _WriteChar(14);
+	/* Print each digit */
+	while(NumDigits)
+	{
+		NumDigits--;
+		if (NumDigits + 1 == DecimalPlaces)
+			_WriteChar(14);
 	
-	_WriteChar(Digits[NumDigits] + 16);
-  }
+		_WriteChar(Digits[NumDigits] + 16);
+	}
 }
 
 
@@ -609,20 +753,20 @@ void HCuOLED::_WriteChar(char character)
    LCDLarge_24pt (A large 4 row LCD style font) */
 void HCuOLED::SetFont(const byte *Font)
 {
-  if(Font == Terminal_8pt)
-  {
-    _FontType = Terminal_8pt;
-	_FontHight = Terminal_8ptFontInfo.CharacterHeight;
-	_FontDescriptor = Terminal_8ptFontInfo.Descriptors;
-  }else if(Font == MedProp_11pt)
-  {
-    _FontType = MedProp_11pt;
-	_FontHight = MedProp_11ptFontInfo.CharacterHeight;
-	_FontDescriptor = MedProp_11ptFontInfo.Descriptors;
-  }else if(Font == LCDLarge_24pt  )
-  {
-    _FontType = LCDLarge_24pt;
-	_FontHight = LCDLarge_24ptFontInfo.CharacterHeight;
-	_FontDescriptor = LCDLarge_24ptFontInfo.Descriptors;
-  }
+	if(Font == Terminal_8pt)
+	{
+		_FontType = Terminal_8pt;
+		_FontHight = Terminal_8ptFontInfo.CharacterHeight;
+		_FontDescriptor = Terminal_8ptFontInfo.Descriptors;
+	}else if(Font == MedProp_11pt)
+	{
+		_FontType = MedProp_11pt;
+		_FontHight = MedProp_11ptFontInfo.CharacterHeight;
+		_FontDescriptor = MedProp_11ptFontInfo.Descriptors;
+	}else if(Font == LCDLarge_24pt  )
+	{
+		_FontType = LCDLarge_24pt;
+		_FontHight = LCDLarge_24ptFontInfo.CharacterHeight;
+		_FontDescriptor = LCDLarge_24ptFontInfo.Descriptors;
+	}
 }
