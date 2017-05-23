@@ -41,3 +41,8 @@ Added compatability with ESP8266
 Added support for uOLED displays in I2C mode
 Added support for WeMos D1 mini OLED shield (see item HCWEMO0007)
 Made speed improvement to erase function (thanks to vladyslav-savchenko)
+
+
+Version 0.3 (22/05/17)
+
+Updated to include 0.9" 128x32 screens (HCMODU0118 & HCMODU0119). Use option SSD1306_128_32 for DisplayType or see example sketch HCuOLED_Things_Example_For_HCMODU0118_HCMODU0119.ino
