@@ -1,6 +1,6 @@
 /* FILE:    HCuOLED.h
-   DATE:    06/12/16
-   VERSION: 0.2
+   DATE:    22/05/17
+   VERSION: 0.3
    AUTHOR:  Andrew Davies
 
 16/04/15 version 0.1: Original version
@@ -8,6 +8,7 @@
 					  Added support for uOLED displays in I2C mode
 					  Added support for WeMos D1 mini OLED shield (see item HCWEMO0007)
 					  Made speed improvement to erase function (thanks to vladyslav-savchenko)
+22/05/17 version 0.3: Added support for 128x32 OLED display (see items HCMODU0118 & HCMODU0119)
 
 Library header for SSD1307 and SH1106 based OLED displays. In particular this 
 library has been written for the following displays:
@@ -50,6 +51,7 @@ extern const PROGMEM byte LCDLarge_24pt[];
 #define SSD1306 0
 #define SH1106 1
 #define WEMOS_D1_MINI_OLED 2
+#define SSD1306_128_32 3
 
 /* Display settings */
 #define SSD1306_RES_X 128
@@ -72,6 +74,15 @@ extern const PROGMEM byte LCDLarge_24pt[];
 #define WEMOS_GRAM_COL_END 0x5F
 #define WEMOS_GRAM_PAGE_START 2
 #define WEMOS_GRAM_PAGE_END 7
+
+#define SSD1306_128_32_RES_X 128
+#define SSD1306_128_32_RES_Y 32
+#define SSD1306_128_32_GRAM_COL_START 0x00
+#define SSD1306_128_32_GRAM_COL_END 0x7F
+#define SSD1306_128_32_GRAM_PAGE_START 0
+#define SSD1306_128_32_GRAM_PAGE_END 7
+
+
 
 /* Display resolution */
 #define BUFFERCOLSIZE 128

@@ -1,6 +1,6 @@
 /* FILE:    HCuOLED.cpp
-   DATE:    06/012/16
-   VERSION: 0.2
+   DATE:    22/05/17
+   VERSION: 0.3
    AUTHOR:  Andrew Davies
 
 16/04/15 version 0.1: Original version
@@ -8,6 +8,7 @@
 					  Added support for uOLED displays in I2C mode
 					  Added support for WeMos D1 mini OLED shield (see item HCWEMO0007)
 					  Made speed improvement to erase function (thanks to vladyslav-savchenko)
+22/05/17 version 0.3: Added support for 128x32 OLED display (see items HCMODU0118 & HCMODU0119) 
 					  
 
 Library for SSD1307 and SH1106 based OLED displays. In particular this library has been 
@@ -15,6 +16,7 @@ written for the following displays:
 
 Hobby Components 0.96" uOLED displays (HCMODU0050 & HCMODU0052)
 Hobby Components 1.3" uOLED displays (HCMODU0058 & HCMODU0059)
+Hobby Components 0.9" 128 x 32 uOLED displays (HCMODU0118 & HCMODU0119)
 
 
 You may copy, alter and reuse this code in any way you like, but please leave
@@ -96,7 +98,16 @@ HCuOLED::HCuOLED(byte DisplayType, byte I2C_Add, byte RST_DIO)
 			_GRAM_Page_Start = WEMOS_GRAM_PAGE_START;
 			_GRAM_Page_End = WEMOS_GRAM_PAGE_END;
 			_RAM_Pages = WEMOS_GRAM_PAGE_END - WEMOS_GRAM_PAGE_START + 1;
-			break;		
+			break;	
+
+		case SSD1306_128_32:
+			_Res_Max_X = SSD1306_128_32_RES_X;
+			_GRAM_Col_Start = SSD1306_128_32_GRAM_COL_START;
+			_GRAM_Col_End = SSD1306_128_32_GRAM_COL_END;
+			_GRAM_Page_Start = SSD1306_128_32_GRAM_PAGE_START;
+			_GRAM_Page_End = SSD1306_128_32_GRAM_PAGE_END;
+			_RAM_Pages = SSD1306_128_32_GRAM_PAGE_END - SSD1306_128_32_GRAM_PAGE_START + 1;
+			break;
 	}
 	
 	
@@ -176,9 +187,10 @@ void HCuOLED::Refresh(void)
 {
 	byte ColIndex;
 	byte RowIndex;   
+	byte Temp1, Temp2;
      
 	/* Only for displays with SSD1306 controller which support horizontal address mode */  
-	if(_DisplayType == SSD1306 || _DisplayType == WEMOS_D1_MINI_OLED)
+	if(_DisplayType == SSD1306 || _DisplayType == WEMOS_D1_MINI_OLED || _DisplayType == SSD1306_128_32)
 	{
 		/* set graphics ram start and end columns */
 		_Send_Command(SETCOLADDRESS);
@@ -224,7 +236,41 @@ void HCuOLED::Refresh(void)
 				/* I2C buffer can only hold 32 bytes so write data to graphics memory in 32 byte chunks */
 				for(byte i = 0; i < 31 && ColIndex < _Res_Max_X; i++)
 				{
-					Wire.write(DisplayBuffer[ColIndex][RowIndex]); 
+	
+					/* 128x32 screen is mapped to every other row so one 8 bit column has to be split 
+					   across two row pages. Not a very efficient way to memory map the screen !*/  
+					if(_DisplayType == SSD1306_128_32) 
+					{
+						Temp1 = DisplayBuffer[ColIndex][RowIndex >> 1];
+						Temp2 = 0;
+					
+						if(RowIndex & 1)
+						{
+							if(Temp1 & 0b10000000)
+								Temp2 |= 0x80;
+							if(Temp1 & 0b01000000)
+								Temp2 |= 0x20;
+							if(Temp1 & 0b00100000)
+								Temp2 |= 0x08;
+							if(Temp1 & 0b00010000)
+								Temp2 |= 0x02;
+						}else
+						{
+							if(Temp1 & 0b00001000)
+								Temp2 |= 0x80;
+							if(Temp1 & 0b00000100)
+								Temp2 |= 0x20;
+							if(Temp1 & 0b00000010)
+								Temp2 |= 0x08;
+							if(Temp1 & 0b00000001)
+								Temp2 |= 0x02;		
+						}
+						Wire.write(Temp2);
+					}else /* If its one of the other screens then just write one 8 bit column */
+					{
+						Wire.write(DisplayBuffer[ColIndex][RowIndex]); 
+					}
+						
 					ColIndex++;
 				}
 				Wire.endTransmission();
@@ -412,6 +458,7 @@ void HCuOLED::Bitmap(uint8_t Cols, uint8_t ByteRows, const uint8_t BitmapData[])
   
 	byte BufRow;
 	byte BufX;
+
 	unsigned int BitmapIndex;
   
 	/* Step through each 8 pixel row */
@@ -432,7 +479,7 @@ void HCuOLED::Bitmap(uint8_t Cols, uint8_t ByteRows, const uint8_t BitmapData[])
 				if(BufRow < BUFFERROWSIZE)
 				if (_DrawMode == NORMAL)
 				{
-					DisplayBuffer[BufX][BufRow] |= pgm_read_byte_near(&BitmapData[BitmapIndex]) << (_YPos%8);
+					DisplayBuffer[BufX][BufRow] |= pgm_read_byte_near(&BitmapData[BitmapIndex]) << (_YPos%8);					
 				}else
 				{
 					DisplayBuffer[BufX][BufRow] ^= pgm_read_byte_near(&BitmapData[BitmapIndex]) << (_YPos%8);
@@ -459,7 +506,7 @@ void HCuOLED::Bitmap(uint8_t Cols, uint8_t ByteRows, const uint8_t BitmapData[])
 void HCuOLED::Plot(uint8_t X, uint8_t Y)
 {
 	byte row = Y / BUFFERROWSIZE;
-
+	
 	if(X < BUFFERCOLSIZE && row < BUFFERROWSIZE)
 		if (_DrawMode == NORMAL)
 		{
