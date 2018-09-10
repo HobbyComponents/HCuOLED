@@ -1,6 +1,6 @@
 #ifndef fonts_h
 #define fonts_h
-#include <avr/pgmspace.h>
+//#include <avr/pgmspace.h>
 #include "Arduino.h"
 
 
