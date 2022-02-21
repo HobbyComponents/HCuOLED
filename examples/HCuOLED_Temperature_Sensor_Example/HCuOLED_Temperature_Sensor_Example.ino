@@ -52,8 +52,8 @@ CONSEQUENTIAL DAMAGES FOR ANY REASON WHATSOEVER. */
 
 
 /* Create an instance of the library (uncomment one of the lines below) */
-//HCuOLED HCuOLED(SSD1307, SS_DI, DC_DI, RST_DI); // For SSD1307 displays (HCMODU0050 & HCMODU0052)
-HCuOLED HCuOLED(SH1106, CS_DI, DC_DI, RST_DI); // For SH1106 displays (HCMODU0058 & HCMODU0059)
+//HCuOLED HCuOLED(SSD1307, CS_DI, DC_DI, RST_DI); // For SSD1307 displays (HCMODU0050 & HCMODU0052)
+//HCuOLED HCuOLED(SH1106, CS_DI, DC_DI, RST_DI); // For SH1106 displays (HCMODU0058 & HCMODU0059)
 
 /* Stores the current temperature reading */
 float Temperature;

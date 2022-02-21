@@ -141,8 +141,8 @@ const PROGMEM byte Tiny_Logo_Resistor[] =
 #define EYECLOSED 1
 
 /* Create an instance of the library for each display (uncomment all lines below if you are using 3 modules) */
-HCuOLED HCuOLED1(SSD1307, CS_DI1, DC_DI1, RST_DI1); // For SH1106 displays (HCMODU0058 & HCMODU0059)
-HCuOLED HCuOLED2(SSD1307, CS_DI2, DC_DI2, RST_DI2); // For SH1106 displays (HCMODU0058 & HCMODU0059)
+//HCuOLED HCuOLED1(SSD1307, CS_DI1, DC_DI1, RST_DI1); // For SH1106 displays (HCMODU0058 & HCMODU0059)
+//HCuOLED HCuOLED2(SSD1307, CS_DI2, DC_DI2, RST_DI2); // For SH1106 displays (HCMODU0058 & HCMODU0059)
 //HCuOLED HCuOLED3(SH1106, CS_DI3, DC_DI3, RST_DI3); // For SSD1307 displays (HCMODU0050 & HCMODU0052)
 
 void setup() 

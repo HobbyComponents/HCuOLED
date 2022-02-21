@@ -1,14 +1,29 @@
 /* FILE:    HCuOLED.h
-   DATE:    22/05/17
-   VERSION: 0.3
+   DATE:    14/01/22
+   VERSION: 0.9
    AUTHOR:  Andrew Davies
 
 16/04/15 version 0.1: Original version
-06/12/16 version 0.2: Added compatability with ESP8266
+06/12/16 version 0.2: Added compatibility with ESP8266
 					  Added support for uOLED displays in I2C mode
 					  Added support for WeMos D1 mini OLED shield (see item HCWEMO0007)
 					  Made speed improvement to erase function (thanks to vladyslav-savchenko)
-22/05/17 version 0.3: Added support for 128x32 OLED display (see items HCMODU0118 & HCMODU0119)
+22/05/17 version 0.3: Added support for 128x32 OLED display (see items HCMODU0118 & HCMODU0119) 
+02/11/18 version 0.4: Fixed issue which cause the integer value of 0 not to be printed.
+06/01/19 version 0.5: Change unsigned int to uint16_t in font.h file to fix error when compiling for Wemos boards
+18/05/19 version 0.6: Added Brightness() function to allow adjustment of displays brightness level
+					  Removed initialisation code from Reset() and added a new Init() function to allow multiple displays to be reset from the same pin
+					  Added command to pull CS pin high in the Init() function.
+24/02/21 version 0.7: Add 2 additonal tiny fonts: sharpsharp_5pt & sharpsharp_6pt thanks to Chris Sharp for creating the fonts.
+					  Also added different font spacing for each font.
+					  
+22/03/21 version 0.8: Added GetPixel() function to get the current state of a pixel at a specified coordinate.
+					  Updated font description in Fonts.h file from 'const unsigned int' to 'const short unsigned int' to remove compile error when compiling for WeMos D1
+					  
+11/01/22 version 0.9: Updated Bitmap() and Cursor() functions to allow bitmaps and text to be printed partially off screen
+
+14/01/22 version 1.0: Fixed bug that caused the Flip_H() & Flip_V() functions to not work.
+
 
 Library header for SSD1307 and SH1106 based OLED displays. In particular this 
 library has been written for the following displays:
@@ -28,6 +43,7 @@ MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE, ACCURACY OR LACK OF NEGLIG
 HOBBY COMPONENTS SHALL NOT, IN ANY CIRCUMSTANCES, BE LIABLE FOR ANY DAMAGES,
 INCLUDING, BUT NOT LIMITED TO, SPECIAL, INCIDENTAL OR CONSEQUENTIAL DAMAGES FOR ANY
 REASON WHATSOEVER.
+
 */
 
 
@@ -45,6 +61,8 @@ REASON WHATSOEVER.
 extern const PROGMEM byte Terminal_8pt[];
 extern const PROGMEM byte MedProp_11pt[];
 extern const PROGMEM byte LCDLarge_24pt[];
+extern const PROGMEM byte sharpsharp_6pt[];
+extern const PROGMEM byte sharpsharp_5pt[];
 
 /* Supported displays */
 #define SSD1307 0
@@ -94,6 +112,7 @@ extern const PROGMEM byte LCDLarge_24pt[];
 #define MEMORYADDRESSMODE 0x20
 #define SETCOLADDRESS 0x21
 #define SETPAGEADDRESS 0x22
+#define SETCONTRAST 0x81
 #define CHARGEPUMP 0x8D
 #define SETMUXRATIO 0xA8
 #define DISPLAYONADD 0xAE
@@ -136,19 +155,22 @@ class HCuOLED
   HCuOLED(byte DisplayType, byte SS_DIO, byte DC_DIO, byte RST_DIO);
   HCuOLED(byte DisplayType, byte I2C_Add, byte RST_DIO = 0xFF);
   void Reset(void);
+  void Init(void);
   void Refresh(void);
   static void ClearBuffer(void);
   //void ClearDisplayRam(void);
   void Flip_H(void);
   void Flip_V(void);
+  void Brightness(uint8_t Level);
   static void Bitmap(uint8_t Cols, uint8_t ByteRows, const uint8_t BitmapData[]);
-  static void Cursor(uint8_t X, uint8_t Y);
+  static void Cursor(int X, int Y);
   static void Print(char TextString[]);
   static void Print(long Value);
   static void Print(int long Value, byte DecimalPlaces);
   static void Print(float value, byte digits, byte DecimalPlaces);
   static void SetFont(const byte *Font);
   static void Plot(uint8_t X, uint8_t Y);
+  static boolean GetPixel(uint8_t X, uint8_t Y);
   static void Line(uint8_t X1, uint8_t Y1, uint8_t X2, uint8_t Y2);
   static void Rect(uint8_t X1, uint8_t Y1, uint8_t X2, uint8_t Y2, uint8_t FillMode);
   static void Erase(uint8_t X1, uint8_t Y1, uint8_t X2, uint8_t Y2);
@@ -167,11 +189,12 @@ class HCuOLED
   boolean _Interface;
   boolean _V_Ori;
   boolean _H_Ori;
-  static byte _XPos;
-  static byte _YPos;
+  static int _XPos;
+  static int _YPos;
   static const byte *_FontType;
   static const uint16_t *_FontDescriptor;
   static byte _FontHight;
+  static byte _FontSpacing;
   //byte _DisplayRAMColSize; 
   static byte _DrawMode;
   byte _Res_Max_X;

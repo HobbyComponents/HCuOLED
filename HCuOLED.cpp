@@ -1,22 +1,35 @@
 /* FILE:    HCuOLED.cpp
-   DATE:    22/05/17
-   VERSION: 0.3
+   DATE:    14/01/22
+   VERSION: 1.0
    AUTHOR:  Andrew Davies
 
 16/04/15 version 0.1: Original version
-06/12/16 version 0.2: Added compatability with ESP8266
+06/12/16 version 0.2: Added compatibility with ESP8266
 					  Added support for uOLED displays in I2C mode
 					  Added support for WeMos D1 mini OLED shield (see item HCWEMO0007)
 					  Made speed improvement to erase function (thanks to vladyslav-savchenko)
 22/05/17 version 0.3: Added support for 128x32 OLED display (see items HCMODU0118 & HCMODU0119) 
+02/11/18 version 0.4: Fixed issue which cause the integer value of 0 not to be printed.
+06/01/19 version 0.5: Change unsigned int to uint16_t in font.h file to fix error when compiling for Wemos boards
+18/05/19 version 0.6: Added Brightness() function to allow adjustment of displays brightness level
+					  Removed initialisation code from Reset() and added a new Init() function to allow multiple displays to be reset from the same pin
+					  Added command to pull CS pin high in the Init() function.
+24/02/21 version 0.7: Add 2 additonal tiny fonts: sharpsharp_5pt & sharpsharp_6pt thanks to Chris Sharp for creating the fonts.
+					  Also added different font spacing for each font.
 					  
+22/03/21 version 0.8: Added GetPixel() function to get the current state of a pixel at a specified coordinate.
+					  Updated font description in Fonts.h file from 'const unsigned int' to 'const short unsigned int' to remove compile error when compiling for WeMos D1
+					  
+11/01/22 version 0.9: Updated Bitmap() and Cursor() functions to allow bitmaps and text to be printed partially off screen
 
-Library for SSD1307 and SH1106 based OLED displays. In particular this library has been 
-written for the following displays:
+14/01/22 version 1.0: Fixed bug that caused the Flip_H() & Flip_V() functions to not work.
+
+
+Library header for SSD1307 and SH1106 based OLED displays. In particular this 
+library has been written for the following displays:
 
 Hobby Components 0.96" uOLED displays (HCMODU0050 & HCMODU0052)
 Hobby Components 1.3" uOLED displays (HCMODU0058 & HCMODU0059)
-Hobby Components 0.9" 128 x 32 uOLED displays (HCMODU0118 & HCMODU0119)
 
 
 You may copy, alter and reuse this code in any way you like, but please leave
@@ -45,13 +58,14 @@ byte DisplayBuffer[BUFFERCOLSIZE][8];
 
 
 /* Variables and pointer used by shared static member functions */
-byte HCuOLED::_XPos;
-byte HCuOLED::_YPos;
+int HCuOLED::_XPos;
+int HCuOLED::_YPos;
 byte HCuOLED::_DrawMode;
+
 const byte *HCuOLED::_FontType;
 const uint16_t *HCuOLED::_FontDescriptor;
 byte HCuOLED::_FontHight;
-
+byte HCuOLED::_FontSpacing;
 
 
 /* I2C Constructor to initialise the GPIO and library */
@@ -136,6 +150,7 @@ HCuOLED::HCuOLED(byte DisplayType, byte SS_DIO, byte DC_DIO, byte RST_DIO = 0xFF
 
 	pinMode(_SS, OUTPUT);   
 	pinMode(_DC, OUTPUT);
+	digitalWrite(_SS, HIGH); 
 
 	if(_RST != 0xFF)
 		pinMode(_RST, OUTPUT); 
@@ -291,10 +306,17 @@ void HCuOLED::Reset(void)
 		delay(1);
 		digitalWrite(_RST, HIGH);
 	}
-  
+ 
 	/* Wait 100mS for DC-DC to stabilise. This can probably be reduced */
 	delay(100);
  
+	Init();
+}
+
+
+
+void HCuOLED::Init(void)
+{
 	_Send_Command(SETMUXRATIO); //Set MUX ratio
 	_Send_Command(0x3F);
 	
@@ -322,6 +344,7 @@ void HCuOLED::Reset(void)
 	Flip_H();
 	Flip_V();	
 }
+
 
 
 /* Sends a command byte to the display where:
@@ -377,7 +400,7 @@ void HCuOLED::_DisplayMode(void)
 /* Flip the horizontal orientation of the screen */
 void HCuOLED::Flip_H(void)
 {
-	_H_Ori = ~_H_Ori;
+	_H_Ori = !_H_Ori;
 	
 	/* Via SPI interface */
 	if(_Interface == INT_SPI)
@@ -413,7 +436,7 @@ void HCuOLED::Flip_H(void)
 /* Flip the vertical orientation of the screen */
 void HCuOLED::Flip_V(void)
 {
-	_V_Ori = ~_V_Ori;
+	_V_Ori = !_V_Ori;
 	
 	/* Via SPI interface */
 	if(_Interface == INT_SPI)
@@ -446,6 +469,20 @@ void HCuOLED::Flip_V(void)
 
 
 
+
+/* Sets the brightness of the display where:
+	Level is the brightness level of the display. Valid values for Level are
+		1 = Lowest brightness
+		255 = Highest brightness
+*/
+void HCuOLED::Brightness(uint8_t Level)
+{
+	_Send_Command(SETCONTRAST);
+	_Send_Command(Level);
+}
+
+
+
 /* Write bitmap data to the LCD starting at the cursor location where:
    Cols is the number byte columns to write to.
    ByteRows is the number of rows to write to in 8 pixel chunks 
@@ -453,11 +490,11 @@ void HCuOLED::Flip_V(void)
 
 void HCuOLED::Bitmap(uint8_t Cols, uint8_t ByteRows, const uint8_t BitmapData[])
 {
-	byte XIndex;
-	byte YIndex;
+	int XIndex;
+	int YIndex;
   
-	byte BufRow;
-	byte BufX;
+	int BufRow;
+	int BufX;
 
 	unsigned int BitmapIndex;
   
@@ -468,31 +505,33 @@ void HCuOLED::Bitmap(uint8_t Cols, uint8_t ByteRows, const uint8_t BitmapData[])
 		for (XIndex = 0; XIndex < Cols; XIndex++)
 		{
 			BufX = XIndex + _XPos;
-      
+
 			/* If column is beyond display area then don't bother writing to it*/
-			if(BufX < BUFFERCOLSIZE)
+			if(BufX >= 0 && BufX < BUFFERCOLSIZE)
 			{
 				BufRow = YIndex + (_YPos / 8);
 				BitmapIndex = (YIndex * Cols)+ XIndex;
       
 				/* If row is beyond the display area then don't bother writing to it */
-				if(BufRow < BUFFERROWSIZE)
-				if (_DrawMode == NORMAL)
+				if(BufRow >= 0 && BufRow < BUFFERROWSIZE)
 				{
-					DisplayBuffer[BufX][BufRow] |= pgm_read_byte_near(&BitmapData[BitmapIndex]) << (_YPos%8);					
-				}else
-				{
-					DisplayBuffer[BufX][BufRow] ^= pgm_read_byte_near(&BitmapData[BitmapIndex]) << (_YPos%8);
-				}
+					if (_DrawMode == NORMAL)
+					{
+						DisplayBuffer[BufX][BufRow] |= pgm_read_byte_near(&BitmapData[BitmapIndex]) << (_YPos%8);					
+					}else
+					{
+						DisplayBuffer[BufX][BufRow] ^= pgm_read_byte_near(&BitmapData[BitmapIndex]) << (_YPos%8);
+					}
 
-				/* If column data overlaps to 8 bit rows then write to the second row */  
-				if(_YPos%8 && (BufRow +1) < BUFFERROWSIZE)
-				if (_DrawMode == NORMAL)
-				{
-					DisplayBuffer[BufX][BufRow+1] |= pgm_read_byte_near(&BitmapData[BitmapIndex]) >> (8 - (_YPos%8));
-				}else
-				{
-					DisplayBuffer[BufX][BufRow+1] ^= pgm_read_byte_near(&BitmapData[BitmapIndex]) >> (8 - (_YPos%8));		  
+					/* If column data overlaps to 8 bit rows then write to the second row */  
+					if(_YPos%8 && (BufRow +1) < BUFFERROWSIZE)
+					if (_DrawMode == NORMAL)
+					{
+						DisplayBuffer[BufX][BufRow+1] |= pgm_read_byte_near(&BitmapData[BitmapIndex]) >> (8 - (_YPos%8));
+					}else
+					{
+						DisplayBuffer[BufX][BufRow+1] ^= pgm_read_byte_near(&BitmapData[BitmapIndex]) >> (8 - (_YPos%8));		  
+					}
 				}
 			}
 		}
@@ -519,6 +558,24 @@ void HCuOLED::Plot(uint8_t X, uint8_t Y)
 		DisplayBuffer[X][row] &=  ~(0x01 << (Y % 8));	
 		}
 }
+
+
+/* Get the current state of a pixel where:
+   X is the x axis coordinate of the pixel
+   Y is the Y axis coordinate of the pixel
+   
+   Returns: A boolean value representing the state of the pixel at coordiate X,Y
+*/
+boolean HCuOLED::GetPixel(uint8_t X, uint8_t Y)
+{
+	byte row = Y / BUFFERROWSIZE;
+	
+	if(X < BUFFERCOLSIZE && row < BUFFERROWSIZE)
+		return DisplayBuffer[X][row] & (0x01 << (Y % 8));
+
+	return false;
+}
+
 
 
 /* Draw a line where:
@@ -650,7 +707,7 @@ void HCuOLED::DrawMode(byte DrawMode)
 /* Sets the location of the cursor for text and bitmap graphics where:
    X and Y are the starting top left X & Y axis coordinates */
 
-void HCuOLED::Cursor(uint8_t X, uint8_t Y)
+void HCuOLED::Cursor(int X, int Y)
 {
 	_XPos = X;
 	_YPos = Y;
@@ -704,30 +761,35 @@ void HCuOLED::Print(long Value)
 	int long Temp;
 	byte NumDigits = 0;
   
-	/* Is the number negative ? */
-	if (Value < 0)
+	if(Value == 0)
+		_WriteChar(0x30 - 0x20);
+	else
 	{
-		_WriteChar(13);
-		Temp = Value * -1;
-	}else
-	{
-		Temp = Value;
-	}
+		/* Is the number negative ? */
+		if (Value < 0)
+		{
+			_WriteChar(13);
+			Temp = Value * -1;
+		}else
+		{
+			Temp = Value;
+		}
   
-	/* Store each digit in a byte array so that they 
-	   can be printed in reverse order */
-	while (Temp)
-	{
-		Digits[NumDigits] = Temp % 10;
-		Temp /= 10;
-		NumDigits++;
-	} 
+		/* Store each digit in a byte array so that they 
+		can be printed in reverse order */
+		while (Temp)
+		{
+			Digits[NumDigits] = Temp % 10;
+			Temp /= 10;
+			NumDigits++;
+		} 
 
-	/* Print each digit */
-	while(NumDigits)
-	{
-		NumDigits--;
-		_WriteChar(Digits[NumDigits] + 16);
+		/* Print each digit */
+		while(NumDigits)
+		{
+			NumDigits--;
+			_WriteChar(Digits[NumDigits] + 16);
+		}
 	}
 }
 
@@ -789,7 +851,7 @@ void HCuOLED::_WriteChar(char character)
 	FontByteAddress = _FontType + pgm_read_word_near(_FontDescriptor + (character * 2) + 1);
 	FontWidth = pgm_read_word_near(_FontDescriptor + (character * 2));
 	Bitmap(FontWidth, _FontHight, FontByteAddress);  
-	_XPos = _XPos + FontWidth + 2;
+	_XPos = _XPos + FontWidth + _FontSpacing;//2;
 }
 
 
@@ -804,16 +866,31 @@ void HCuOLED::SetFont(const byte *Font)
 	{
 		_FontType = Terminal_8pt;
 		_FontHight = Terminal_8ptFontInfo.CharacterHeight;
+		_FontSpacing = Terminal_8ptFontInfo.CharacterSpacing;
 		_FontDescriptor = Terminal_8ptFontInfo.Descriptors;
 	}else if(Font == MedProp_11pt)
 	{
 		_FontType = MedProp_11pt;
 		_FontHight = MedProp_11ptFontInfo.CharacterHeight;
+		_FontSpacing = MedProp_11ptFontInfo.CharacterSpacing;
 		_FontDescriptor = MedProp_11ptFontInfo.Descriptors;
 	}else if(Font == LCDLarge_24pt  )
 	{
 		_FontType = LCDLarge_24pt;
 		_FontHight = LCDLarge_24ptFontInfo.CharacterHeight;
+		_FontSpacing = LCDLarge_24ptFontInfo.CharacterSpacing;
 		_FontDescriptor = LCDLarge_24ptFontInfo.Descriptors;
+	}else if(Font == sharpsharp_6pt)
+	{
+		_FontType = sharpsharp_6pt;
+		_FontHight = sharpsharp_6ptFontInfo.CharacterHeight;
+		_FontSpacing = sharpsharp_6ptFontInfo.CharacterSpacing;
+		_FontDescriptor = sharpsharp_6ptFontInfo.Descriptors;
+	}else if(Font == sharpsharp_5pt)
+	{
+		_FontType = sharpsharp_5pt;
+		_FontHight = sharpsharp_5ptFontInfo.CharacterHeight;
+		_FontSpacing = sharpsharp_5ptFontInfo.CharacterSpacing;
+		_FontDescriptor = sharpsharp_5ptFontInfo.Descriptors;
 	}
 }
